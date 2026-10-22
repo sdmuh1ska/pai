@@ -2976,7 +2976,7 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
        ===================================================== -->
   <script>
   (function () {
-    var API_URL = 'https://script.google.com/macros/s/AKfycbyfqRmlFpzHPIdCw-lohJMAwR8Osk6KxXKmdIe8rwgqLeUNi0whtTAab6qoxmwkSJj1/exec';
+    var API_URL = 'GANTI_DENGAN_URL_WEB_APP_ANDA/exec';
     var KUNCI_TOKEN = 'alislam_token';
     var KUNCI_SESI_LOGIN = 'alislam_sesi_login';
 
@@ -2994,6 +2994,8 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
     }
 
     function panggilApi(fn, args, ok, gagal) {
+      var adaToken = !!ambilToken();
+
       fetch(API_URL, {
         method: 'POST',
         // text/plain = "simple request": tidak memicu preflight CORS yang tidak didukung Apps Script
@@ -3016,9 +3018,16 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
 
         if (res && res.code === 'AUTH') {
           hapusToken();
-          alert('Sesi Anda sudah berakhir. Silakan login kembali.');
-          location.reload();
-          return;
+
+          // Hanya tampilkan pesan bila pengguna memang sudah login sebelumnya.
+          // Panggilan sebelum login cukup dianggap gagal, tanpa alert dan reload.
+          if (adaToken) {
+            alert('Sesi Anda sudah berakhir. Silakan login kembali.');
+            location.reload();
+            return;
+          }
+
+          throw new Error('Belum login.');
         }
 
         throw new Error((res && res.error) || 'Terjadi kesalahan pada server.');

@@ -19,9 +19,9 @@
   ],
   "screenshots": [
     {
-      "src": "screenshot.jpg",
+      "src": "screenshot.png",
       "sizes": "1280x720",
-      "type": "image/jpeg",
+      "type": "image/png",
       "form_factor": "wide"
     }
   ]

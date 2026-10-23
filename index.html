@@ -2976,7 +2976,7 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
        ===================================================== -->
   <script>
   (function () {
-    var API_URL = 'https://script.google.com/macros/s/AKfycbyfqRmlFpzHPIdCw-lohJMAwR8Osk6KxXKmdIe8rwgqLeUNi0whtTAab6qoxmwkSJj1/exec';
+    var API_URL = 'GANTI_DENGAN_URL_WEB_APP_ANDA/exec';
 
     var KUNCI_TOKEN = 'alislam_token';
     var KUNCI_SESI_LOGIN = 'alislam_sesi_login';
@@ -3063,7 +3063,11 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
       })
       .then(function (r) {
         if (penghitung) clearTimeout(penghitung);
-        if (!r.ok) throw new Error('Server mengembalikan status ' + r.status);
+        if (!r.ok) {
+          var e = new Error('Server mengembalikan status ' + r.status + '. Periksa alamat API_URL.');
+          e.tanpaUlang = (r.status >= 400 && r.status < 500);   // salah alamat/izin: mengulang percuma
+          throw e;
+        }
         return r.json();
       })
       .then(function (res) {
@@ -3071,6 +3075,7 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
         selesai(null, res);
       }, function (err) {
         if (penghitung) clearTimeout(penghitung);
+        if (err && err.tanpaUlang) { selesai(err, null); return; }
         ulangiAtau(err, null);
       });
     }
@@ -3171,6 +3176,112 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
     // "Membangunkan" Apps Script begitu halaman dibuka, agar login pertama tidak menunggu lama.
     if (API_URL.indexOf('GANTI_DENGAN') === -1) {
       try { fetch(API_URL, { method: 'GET', mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+    }
+  })();
+  </script>
+
+  <!-- =====================================================
+       APLIKASI (PWA): pasang di layar utama Android / iPhone
+       ===================================================== -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1e293b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Al Islam">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <script>
+  (function () {
+    // 1. Daftarkan service worker (hanya lewat https atau localhost)
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('SW gagal:', e); });
+      });
+    }
+
+    // 2. Ajakan pasang aplikasi (hanya di HP/tablet, hanya bila belum terpasang, bisa ditutup)
+    var KUNCI_TUTUP = 'alislam_pasang_ditutup';
+    var ua = navigator.userAgent || '';
+    var iOS = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var seluler = iOS || /android/i.test(ua);
+    var terpasang = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    var ditutup = false;
+    try { ditutup = !!localStorage.getItem(KUNCI_TUTUP); } catch (e) {}
+
+    if (!seluler || terpasang || ditutup) return;
+
+    var tawaran = null;
+
+    function hapusBanner() {
+      var b = document.getElementById('bannerPasangAplikasi');
+      if (b) b.remove();
+    }
+
+    function tutup() {
+      try { localStorage.setItem(KUNCI_TUTUP, '1'); } catch (e) {}
+      hapusBanner();
+    }
+
+    function tampilkan() {
+      if (document.getElementById('bannerPasangAplikasi') || !document.body) return;
+
+      var kotak = document.createElement('div');
+      kotak.id = 'bannerPasangAplikasi';
+      kotak.setAttribute('role', 'dialog');
+      kotak.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#fff;color:#1e293b;' +
+        'border-radius:14px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:flex;align-items:center;' +
+        'gap:12px;font:600 14px/1.35 "Source Sans Pro",sans-serif;max-width:520px;margin:0 auto;';
+
+      var ikon = document.createElement('img');
+      ikon.src = 'icons/icon-192.png';
+      ikon.alt = '';
+      ikon.style.cssText = 'width:44px;height:44px;border-radius:10px;flex:0 0 auto;';
+
+      var teks = document.createElement('div');
+      teks.style.cssText = 'flex:1;min-width:0;';
+      teks.textContent = iOS
+        ? 'Pasang aplikasi: ketuk ikon Bagikan di Safari, lalu pilih "Tambah ke Layar Utama".'
+        : 'Pasang Monitoring Al Islam di layar utama HP Anda.';
+
+      kotak.appendChild(ikon);
+      kotak.appendChild(teks);
+
+      if (!iOS && tawaran) {
+        var pasang = document.createElement('button');
+        pasang.type = 'button';
+        pasang.textContent = 'Pasang';
+        pasang.style.cssText = 'width:auto;padding:9px 16px;border:0;border-radius:9px;background:#059669;color:#fff;font:700 14px "Source Sans Pro",sans-serif;cursor:pointer;flex:0 0 auto;';
+        pasang.onclick = function () {
+          tawaran.prompt();
+          tawaran.userChoice.then(function () { tawaran = null; tutup(); });
+        };
+        kotak.appendChild(pasang);
+      }
+
+      var x = document.createElement('button');
+      x.type = 'button';
+      x.setAttribute('aria-label', 'Tutup');
+      x.textContent = '×';
+      x.style.cssText = 'width:auto;padding:0 6px;border:0;background:transparent;color:#64748b;font:400 26px/1 sans-serif;cursor:pointer;flex:0 0 auto;';
+      x.onclick = tutup;
+      kotak.appendChild(x);
+
+      document.body.appendChild(kotak);
+    }
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      tawaran = e;
+      if (document.readyState !== 'loading') tampilkan();
+      else document.addEventListener('DOMContentLoaded', tampilkan);
+    });
+
+    window.addEventListener('appinstalled', function () { tutup(); });
+
+    // iPhone tidak punya tombol pasang otomatis, jadi tampilkan petunjuk setelah halaman siap
+    if (iOS) {
+      document.addEventListener('DOMContentLoaded', function () { setTimeout(tampilkan, 2500); });
     }
   })();
   </script>
@@ -9206,7 +9317,6 @@ document.addEventListener('DOMContentLoaded', function() {
   // Jalankan kedua fungsi secara otomatis ketika halaman form / menu dibuka
   document.addEventListener('DOMContentLoaded', function() {
     setTanggalOtomatis();
-    muatDropdown();
   });
 
 // Fungsi untuk membuat opsi Jam (00-23) dan Menit (00-59)

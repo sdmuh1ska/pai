@@ -18,6 +18,6 @@
     { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
 ]
 "screenshots" : [
-  {"src": "screenshot.jpg", "sizes": "1280x720", "type": "image/jpg", "platform": "wide",}
+  {"src": "screenshot.jpg", "sizes": "1280x720", "type": "image/jpg", "platform": "wide"}
 ]
 }

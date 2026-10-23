@@ -2977,8 +2977,24 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
   <script>
   (function () {
     var API_URL = 'https://script.google.com/macros/s/AKfycbyfqRmlFpzHPIdCw-lohJMAwR8Osk6KxXKmdIe8rwgqLeUNi0whtTAab6qoxmwkSJj1/exec';
+
     var KUNCI_TOKEN = 'alislam_token';
     var KUNCI_SESI_LOGIN = 'alislam_sesi_login';
+    var AWALAN_CACHE = 'alislam_cache_';
+
+    var BATAS_WAKTU_MS = 40000;          // tunggu jawaban server maksimal 40 detik
+    var MAKS_ULANG = 2;                  // coba ulang otomatis bila koneksi putus / server sibuk
+    var UMUR_CACHE_MS = 6 * 60 * 60 * 1000;
+
+    // Daftar yang jarang berubah: disimpan di browser agar form langsung terisi
+    var FUNGSI_DAFTAR = {
+      ambilDaftarSurah: 1,
+      ambilDaftarDoa: 1,
+      getMasterSurah: 1,
+      getMasterDoa: 1
+    };
+
+    var sedangJalan = {};
 
     function ambilToken() {
       try { return localStorage.getItem(KUNCI_TOKEN) || ''; } catch (e) { return ''; }
@@ -2993,48 +3009,137 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
       } catch (e) {}
     }
 
-    function panggilApi(fn, args, ok, gagal) {
-      var adaToken = !!ambilToken();
+    function cacheBaca(fn) {
+      try {
+        var mentah = localStorage.getItem(AWALAN_CACHE + fn);
+        if (!mentah) return null;
+        var o = JSON.parse(mentah);
+        return (Date.now() - o.t < UMUR_CACHE_MS) ? o : null;
+      } catch (e) { return null; }
+    }
+    function cacheTulis(fn, nilai) {
+      try { localStorage.setItem(AWALAN_CACHE + fn, JSON.stringify({ t: Date.now(), v: nilai })); } catch (e) {}
+    }
+
+    function buatIdPermintaan() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+
+    function pesanKoneksi(err) {
+      if (err && err.name === 'AbortError') {
+        return 'Server terlalu lama menjawab. Periksa internet Anda lalu coba lagi.';
+      }
+      if (err && err.name === 'SyntaxError') {
+        return 'Server tidak menjawab dengan benar. Silakan coba lagi sebentar lagi.';
+      }
+      if (err && /Failed to fetch|NetworkError|Load failed/i.test(String(err.message || err))) {
+        return 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+      }
+      return (err && err.message) ? err.message : 'Terjadi kesalahan koneksi.';
+    }
+
+    // Mengirim satu permintaan. Bila jaringan putus atau server sibuk, mencoba lagi
+    // dengan ID permintaan yang SAMA, sehingga server tidak menyimpan data dua kali.
+    function kirim(fn, args, rid, percobaan, selesai) {
+      var pengendali = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var penghitung = pengendali ? setTimeout(function () { pengendali.abort(); }, BATAS_WAKTU_MS) : null;
+
+      function ulangiAtau(err, res) {
+        if (percobaan < MAKS_ULANG) {
+          setTimeout(function () {
+            kirim(fn, args, rid, percobaan + 1, selesai);
+          }, 1200 * (percobaan + 1));
+        } else {
+          selesai(err, res);
+        }
+      }
 
       fetch(API_URL, {
         method: 'POST',
         // text/plain = "simple request": tidak memicu preflight CORS yang tidak didukung Apps Script
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ fn: fn, args: args, token: ambilToken() })
+        body: JSON.stringify({ fn: fn, args: args, token: ambilToken(), rid: rid }),
+        signal: pengendali ? pengendali.signal : undefined
       })
       .then(function (r) {
+        if (penghitung) clearTimeout(penghitung);
         if (!r.ok) throw new Error('Server mengembalikan status ' + r.status);
         return r.json();
       })
       .then(function (res) {
-        if (res && res.ok) {
+        if (res && res.code === 'BUSY') { ulangiAtau(null, res); return; }
+        selesai(null, res);
+      }, function (err) {
+        if (penghitung) clearTimeout(penghitung);
+        ulangiAtau(err, null);
+      });
+    }
+
+    function panggilApi(fn, args, ok, gagal) {
+      // 1. Daftar surah/doa: pakai salinan di browser bila masih baru
+      if (FUNGSI_DAFTAR[fn]) {
+        var c = cacheBaca(fn);
+        if (c) { if (typeof ok === 'function') ok(c.v); return; }
+      }
+
+      // 2. Klik ganda / panggilan kembar yang sedang berjalan digabung menjadi satu
+      var kunci = fn + '|' + JSON.stringify(args);
+      if (sedangJalan[kunci]) {
+        sedangJalan[kunci].push({ ok: ok, gagal: gagal });
+        return;
+      }
+      sedangJalan[kunci] = [{ ok: ok, gagal: gagal }];
+
+      var adaToken = !!ambilToken();
+
+      kirim(fn, args, buatIdPermintaan(), 0, function (err, res) {
+        var penerima = sedangJalan[kunci] || [];
+        delete sedangJalan[kunci];
+
+        function semuaGagal(e) {
+          penerima.forEach(function (p) {
+            if (typeof p.gagal === 'function') p.gagal(e);
+            else console.error('Panggilan API gagal:', fn, e);
+          });
+        }
+
+        if (err || !res) {
+          semuaGagal(new Error(res && res.error ? res.error : pesanKoneksi(err)));
+          return;
+        }
+
+        if (res.ok) {
           if (fn === 'loginUser' && res.result && res.result.token) {
             simpanToken(res.result.token);
             delete res.result.token; // token tidak perlu ikut tersimpan di sesi tampilan
           }
-          if (typeof ok === 'function') ok(res.result);
+          if (FUNGSI_DAFTAR[fn] && res.result && res.result.length) cacheTulis(fn, res.result);
+
+          penerima.forEach(function (p) {
+            if (typeof p.ok === 'function') p.ok(res.result);
+          });
           return;
         }
 
-        if (res && res.code === 'AUTH') {
+        if (res.code === 'AUTH') {
           hapusToken();
 
-          // Hanya tampilkan pesan bila pengguna memang sudah login sebelumnya.
-          // Panggilan sebelum login cukup dianggap gagal, tanpa alert dan reload.
+          // Pesan hanya bila pengguna memang sudah login lalu sesinya habis.
           if (adaToken) {
             alert('Sesi Anda sudah berakhir. Silakan login kembali.');
             location.reload();
             return;
           }
-
-          throw new Error('Belum login.');
+          semuaGagal(new Error('Belum login.'));
+          return;
         }
 
-        throw new Error((res && res.error) || 'Terjadi kesalahan pada server.');
-      })
-      .catch(function (err) {
-        if (typeof gagal === 'function') gagal(err);
-        else console.error('Panggilan API gagal:', fn, err);
+        if (res.code === 'BUSY') {
+          semuaGagal(new Error('Server sedang sibuk. Silakan tekan simpan sekali lagi.'));
+          return;
+        }
+
+        semuaGagal(new Error(res.error || 'Terjadi kesalahan pada server.'));
       });
     }
 
@@ -3055,6 +3160,18 @@ BARUUUUUUUUUUUUUUUUUUUUUUUU
     window.google = window.google || {};
     window.google.script = { run: buatRunner(null, null) };
     window.hapusTokenAlIslam = hapusToken;
+
+    // Tanggal hari ini menurut jam perangkat (toISOString memakai UTC sehingga
+    // sebelum pukul 07.00 WIB masih terbaca "kemarin").
+    window.hariIniLokal = function () {
+      var d = new Date();
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    };
+
+    // "Membangunkan" Apps Script begitu halaman dibuka, agar login pertama tidak menunggu lama.
+    if (API_URL.indexOf('GANTI_DENGAN') === -1) {
+      try { fetch(API_URL, { method: 'GET', mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+    }
   })();
   </script>
 </head>
@@ -6217,7 +6334,7 @@ function simpanSemuaSholat() {
 
   // 2. Ambil Tanggal
   const elTanggal = document.getElementById('tanggalSholat');
-  const tanggal = elTanggal ? elTanggal.value : new Date().toISOString().split('T')[0];
+  const tanggal = elTanggal ? elTanggal.value : hariIniLokal();
 
   if (!idSiswa) {
     tampilkanPesanSholat('Sesi login tidak terdeteksi. Silakan login kembali!', 'error');
@@ -6334,7 +6451,7 @@ function simpanFormHusna() {
 
   // 2. Ambil Value dari Input Form
   const elTanggal = document.getElementById('tanggalHusna');
-  const tanggal = elTanggal ? elTanggal.value : new Date().toISOString().split('T')[0];
+  const tanggal = elTanggal ? elTanggal.value : hariIniLokal();
   const halamanMulai = document.getElementById('halamanMulaiHusna') ? document.getElementById('halamanMulaiHusna').value.trim() : '';
   const halamanAkhir = document.getElementById('halamanAkhirHusna') ? document.getElementById('halamanAkhirHusna').value.trim() : '';
   const pendampingan = document.getElementById('pendampinganHusna') ? document.getElementById('pendampinganHusna').value.trim() : '';
@@ -6523,7 +6640,7 @@ function simpanFormHafalanDoa() {
 }
 
 function bukaInputGuru(jenis) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = hariIniLokal();
   const tglInput = document.getElementById('tglInputGuru');
   if (tglInput) tglInput.value = today;
 
@@ -9967,7 +10084,7 @@ function bukaRiwayatKelasGuru() {
 
 // Mengatur tanggal awal & akhir default ke hari ini saat halaman dibuka
 document.addEventListener("DOMContentLoaded", function() {
-  const hariIni = new Date().toISOString().split('T')[0];
+  const hariIni = hariIniLokal();
   
   const elMulai = document.getElementById('tglMulaiRiwayat');
   const elAkhir = document.getElementById('tglAkhirRiwayat');
